@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  dailyMinMaxSeries,
   fetchYearDailyTemps,
   formatPlaceLabel,
   searchPlaces,
   type ArchiveDaily,
   type GeocodeResult,
+  type TempSource,
 } from "./api/openMeteo";
 import { YearCalendar, type CalendarCellInfo } from "./components/YearCalendar";
 import { daysInYear } from "./lib/dates";
@@ -14,9 +16,12 @@ import {
   computeYearMatchStats,
   fiveYearRange,
 } from "./lib/yearStats";
+import {
+  loadDashboardSettings,
+  maxSelectableYear,
+  saveDashboardSettings,
+} from "./lib/dashboardSettings";
 import "./styles.css";
-
-const MAX_PLACES = 5;
 
 type SummaryRow = {
   place: SelectedPlace;
@@ -224,6 +229,59 @@ const DEFAULT_PLACES: SelectedPlace[] = [
   },
 ];
 
+const DEFAULT_RANGES: TempRanges = {
+  minLow: 12,
+  maxLow: 18,
+  minHigh: 20,
+  maxHigh: 25,
+};
+
+type InitialAppState = {
+  places: SelectedPlace[];
+  activeIdx: number;
+  year: number;
+  ranges: TempRanges;
+  tempSource: TempSource;
+  geoLang: string;
+  summaryMode: "single" | "fiveYear";
+  summarySort: { key: SummarySortKey; dir: "asc" | "desc" };
+  fiveYearSort: { key: FiveYearSortKey; dir: "asc" | "desc" };
+  calendarDetailColors: boolean;
+};
+
+function readInitialAppState(): InitialAppState {
+  const s = loadDashboardSettings();
+  if (!s) {
+    return {
+      places: [...DEFAULT_PLACES],
+      activeIdx: 0,
+      year: defaultYear(),
+      ranges: { ...DEFAULT_RANGES },
+      tempSource: "air",
+      geoLang: "",
+      summaryMode: "single",
+      summarySort: { key: "location", dir: "asc" },
+      fiveYearSort: { key: "location", dir: "asc" },
+      calendarDetailColors: false,
+    };
+  }
+  const places = s.places as SelectedPlace[];
+  return {
+    places,
+    activeIdx: Math.min(s.activeIdx, Math.max(0, places.length - 1)),
+    year: Math.min(maxSelectableYear(), Math.max(1990, s.year)),
+    ranges: { ...s.ranges },
+    tempSource: s.tempSource,
+    geoLang: s.geoLang,
+    summaryMode: s.summaryMode,
+    summarySort: { key: s.summarySort.key as SummarySortKey, dir: s.summarySort.dir },
+    fiveYearSort: { key: s.fiveYearSort.key as FiveYearSortKey, dir: s.fiveYearSort.dir },
+    calendarDetailColors: s.calendarDetailColors,
+  };
+}
+
+const INITIAL_APP = readInitialAppState();
+
 function defaultYear(): number {
   const y = new Date().getFullYear();
   return Math.max(1990, y - 1);
@@ -238,16 +296,13 @@ function yearOptions(): number[] {
 }
 
 export default function App() {
-  const [places, setPlaces] = useState<SelectedPlace[]>(() => [...DEFAULT_PLACES]);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [year, setYear] = useState(defaultYear);
+  const [places, setPlaces] = useState<SelectedPlace[]>(() => [...INITIAL_APP.places]);
+  const [activeIdx, setActiveIdx] = useState(INITIAL_APP.activeIdx);
+  const [year, setYear] = useState(INITIAL_APP.year);
 
-  const [ranges, setRanges] = useState<TempRanges>({
-    minLow: 12,
-    maxLow: 18,
-    minHigh: 20,
-    maxHigh: 25,
-  });
+  const [ranges, setRanges] = useState<TempRanges>(() => ({ ...INITIAL_APP.ranges }));
+
+  const [tempSource, setTempSource] = useState<TempSource>(INITIAL_APP.tempSource);
 
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -255,7 +310,7 @@ export default function App() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const [geoLang, setGeoLang] = useState("");
+  const [geoLang, setGeoLang] = useState(INITIAL_APP.geoLang);
 
   const [archiveByPlaceYear, setArchiveByPlaceYear] = useState<
     Record<string, Partial<Record<number, ArchiveDaily | null>>>
@@ -264,19 +319,47 @@ export default function App() {
     Record<string, Partial<Record<number, string>>>
   >({});
   const [archiveLoading, setArchiveLoading] = useState(false);
-  const [summaryMode, setSummaryMode] = useState<"single" | "fiveYear">("single");
+  const [summaryMode, setSummaryMode] = useState<"single" | "fiveYear">(INITIAL_APP.summaryMode);
 
-  const [summarySort, setSummarySort] = useState<{ key: SummarySortKey; dir: "asc" | "desc" }>({
-    key: "location",
-    dir: "asc",
-  });
+  const [summarySort, setSummarySort] = useState<{ key: SummarySortKey; dir: "asc" | "desc" }>(
+    INITIAL_APP.summarySort
+  );
 
-  const [fiveYearSort, setFiveYearSort] = useState<{ key: FiveYearSortKey; dir: "asc" | "desc" }>({
-    key: "location",
-    dir: "asc",
-  });
+  const [fiveYearSort, setFiveYearSort] = useState<{ key: FiveYearSortKey; dir: "asc" | "desc" }>(
+    INITIAL_APP.fiveYearSort
+  );
 
-  const [calendarDetailColors, setCalendarDetailColors] = useState(false);
+  const [calendarDetailColors, setCalendarDetailColors] = useState(INITIAL_APP.calendarDetailColors);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      saveDashboardSettings({
+        v: 1,
+        places,
+        activeIdx,
+        year,
+        ranges,
+        tempSource,
+        geoLang,
+        summaryMode,
+        summarySort,
+        fiveYearSort,
+        calendarDetailColors,
+      });
+    }, 450);
+    return () => window.clearTimeout(id);
+  }, [
+    places,
+    activeIdx,
+    year,
+    ranges,
+    tempSource,
+    geoLang,
+    summaryMode,
+    summarySort,
+    fiveYearSort,
+    calendarDetailColors,
+  ]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQuery(rawQuery.trim()), 350);
@@ -376,12 +459,8 @@ export default function App() {
           error: err ?? (!daily ? "No data" : null),
         };
       }
-      const matchSet = buildMatchSet(
-        daily.time,
-        daily.temperature_2m_min,
-        daily.temperature_2m_max,
-        ranges
-      );
+      const { mins, maxs } = dailyMinMaxSeries(daily, tempSource);
+      const matchSet = buildMatchSet(daily.time, mins, maxs, ranges);
       const dataDays = daily.time.length;
       const match = matchSet.size;
       const pctOfYear = (match / yd) * 100;
@@ -396,7 +475,7 @@ export default function App() {
         error: null as string | null,
       };
     });
-  }, [places, archiveByPlaceYear, archiveErrorsByYear, ranges, year]);
+  }, [places, archiveByPlaceYear, archiveErrorsByYear, ranges, year, tempSource]);
 
   const fiveYearSummaries = useMemo((): FiveYearSummaryRow[] => {
     const windowYears = fiveYearRange(year);
@@ -430,7 +509,7 @@ export default function App() {
         const daily = archiveByPlaceYear[p.key]?.[y];
         const err = archiveErrorsByYear[p.key]?.[y];
         if (!daily || err) continue;
-        perYear.push(computeYearMatchStats(daily, ranges, y));
+        perYear.push(computeYearMatchStats(daily, ranges, y, tempSource));
       }
       if (perYear.length === 0) {
         return emptyRow(p, "No archive data in this window");
@@ -458,7 +537,7 @@ export default function App() {
         error: null,
       };
     });
-  }, [places, year, ranges, rangeInvalid, archiveByPlaceYear, archiveErrorsByYear]);
+  }, [places, year, ranges, rangeInvalid, archiveByPlaceYear, archiveErrorsByYear, tempSource]);
 
   const sortedFiveYearSummaries = useMemo(() => {
     const dir: 1 | -1 = fiveYearSort.dir === "asc" ? 1 : -1;
@@ -509,13 +588,9 @@ export default function App() {
 
   const activeMatchSet = useMemo(() => {
     if (!activeDaily || rangeInvalid) return new Set<string>();
-    return buildMatchSet(
-      activeDaily.time,
-      activeDaily.temperature_2m_min,
-      activeDaily.temperature_2m_max,
-      ranges
-    );
-  }, [activeDaily, ranges, rangeInvalid]);
+    const { mins, maxs } = dailyMinMaxSeries(activeDaily, tempSource);
+    return buildMatchSet(activeDaily.time, mins, maxs, ranges);
+  }, [activeDaily, ranges, rangeInvalid, tempSource]);
 
   const activeDataSet = useMemo(() => {
     if (!activeDaily) return new Set<string>();
@@ -525,10 +600,11 @@ export default function App() {
   const calendarCellInfo = useMemo((): Map<string, CalendarCellInfo> => {
     const m = new Map<string, CalendarCellInfo>();
     if (!activeDaily || rangeInvalid) return m;
+    const { mins, maxs } = dailyMinMaxSeries(activeDaily, tempSource);
     for (let i = 0; i < activeDaily.time.length; i++) {
       const date = activeDaily.time[i];
-      const tMin = activeDaily.temperature_2m_min[i];
-      const tMax = activeDaily.temperature_2m_max[i];
+      const tMin = mins[i];
+      const tMax = maxs[i];
       if (tMin == null || tMax == null || Number.isNaN(tMin) || Number.isNaN(tMax)) continue;
       m.set(date, {
         tone: calendarDayTone(tMin, tMax, ranges),
@@ -537,13 +613,12 @@ export default function App() {
       });
     }
     return m;
-  }, [activeDaily, ranges, rangeInvalid]);
+  }, [activeDaily, ranges, rangeInvalid, tempSource]);
 
   function addPlace(r: GeocodeResult) {
     const next = placeFromGeocode(r);
     setPlaces((prev) => {
       if (prev.some((p) => p.key === next.key)) return prev;
-      if (prev.length >= MAX_PLACES) return prev;
       return [...prev, next];
     });
     setSearchHits([]);
@@ -576,7 +651,7 @@ export default function App() {
       </header>
 
       <section className="card stack">
-        <h2>Locations (up to {MAX_PLACES})</h2>
+        <h2>Locations</h2>
         <div className="row gap wrap">
           <label className="small-label" htmlFor="search">
             Search
@@ -617,7 +692,7 @@ export default function App() {
                 <button
                   type="button"
                   className="hit-btn"
-                  disabled={places.length >= MAX_PLACES || places.some((p) => p.key === String(h.id))}
+                  disabled={places.some((p) => p.key === String(h.id))}
                   onClick={() => addPlace(h)}
                 >
                   {formatPlaceLabel(h)}
@@ -650,6 +725,18 @@ export default function App() {
                   {y}
                 </option>
               ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="temp-source">Compare using</label>
+            <select
+              id="temp-source"
+              value={tempSource}
+              onChange={(e) => setTempSource(e.target.value as TempSource)}
+              title="Archive daily min/max from Open-Meteo"
+            >
+              <option value="air">Air temperature (2 m)</option>
+              <option value="apparent">Feels like (apparent)</option>
             </select>
           </div>
           <div className="field">
@@ -693,8 +780,10 @@ export default function App() {
           <p className="error-inline">Fix ranges so each &quot;between&quot; pair has min ≤ max.</p>
         )}
         <p className="muted small">
-          A day counts when <strong>daily minimum</strong> is inside the low band and <strong>daily maximum</strong> is
-          inside the high band (archive uses Open-Meteo&apos;s local day for each coordinate).
+          A day counts when the <strong>daily minimum</strong> of the chosen measure is inside the low band and the{" "}
+          <strong>daily maximum</strong> is inside the high band (Open-Meteo archive, local calendar day).{" "}
+          <strong>Feels like</strong> uses daily apparent temperature min/max; <strong>Air</strong> uses 2 m
+          temperature.
         </p>
       </section>
 
@@ -788,8 +877,9 @@ export default function App() {
                 </table>
               </div>
               <p className="muted small">
-                &quot;% of year&quot; uses {daysInYear(year)} calendar days. If the archive returns fewer days (rare
-                near the present), &quot;% of archive days&quot; uses only days with values.
+                &quot;% of year&quot; uses {daysInYear(year)} calendar days. For the current calendar year, requests
+                stop at today&apos;s date (local), so you get partial-year data through the latest archive day. If the
+                archive returns fewer rows than that, &quot;% of archive days&quot; uses only days with values.
               </p>
             </>
           ) : (
@@ -939,10 +1029,11 @@ export default function App() {
           </div>
           <div className="cal-toolbar row gap wrap align-end">
             <p className="muted small cal-meta grow">
-              Active: <strong>{activePlace.label}</strong>.
+              Active: <strong>{activePlace.label}</strong>. Using{" "}
+              <strong>{tempSource === "apparent" ? "feels-like (apparent)" : "air (2 m)"}</strong> daily min/max.
               {calendarDetailColors
-                ? " Colors show how each day's low/high relates to your bands (legend below)."
-                : " Teal = both daily min and max fall in your bands."}
+                ? " Colors show how each day relates to your bands (legend below)."
+                : " Teal = both min and max fall in your bands."}
             </p>
             <label className="cal-toggle">
               <input
@@ -992,7 +1083,9 @@ export default function App() {
         <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">
           Open-Meteo
         </a>
-        . Very recent dates can lag a few days in the archive.
+        . Very recent dates can lag a few days in the archive. Your choices (locations, year, bands, etc.) are saved in
+        this browser&apos;s <span className="mono">localStorage</span>; archive API responses are cached there too
+        (full calendar years longer than in-progress years).
       </p>
     </>
   );

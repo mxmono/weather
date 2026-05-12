@@ -1,4 +1,4 @@
-import type { ArchiveDaily } from "../api/openMeteo";
+import { dailyMinMaxSeries, type ArchiveDaily, type TempSource } from "../api/openMeteo";
 import { daysInYear } from "./dates";
 import { buildMatchSet, type TempRanges } from "./tempMatch";
 
@@ -20,15 +20,12 @@ export type YearMatchStats = {
 export function computeYearMatchStats(
   daily: ArchiveDaily,
   ranges: TempRanges,
-  calendarYear: number
+  calendarYear: number,
+  source: TempSource
 ): YearMatchStats {
   const yd = daysInYear(calendarYear);
-  const matchSet = buildMatchSet(
-    daily.time,
-    daily.temperature_2m_min,
-    daily.temperature_2m_max,
-    ranges
-  );
+  const { mins, maxs } = dailyMinMaxSeries(daily, source);
+  const matchSet = buildMatchSet(daily.time, mins, maxs, ranges);
   const dataDays = daily.time.length;
   const match = matchSet.size;
   return {
