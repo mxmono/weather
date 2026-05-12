@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   dailyMinMaxSeries,
   fetchYearDailyTemps,
@@ -236,6 +236,37 @@ const DEFAULT_RANGES: TempRanges = {
   maxHigh: 25,
 };
 
+/** Allow typing "-" and partial decimals; reject other characters. */
+const BAND_INPUT_PATTERN = /^-?\d*\.?\d*$/;
+
+type RangeInputs = Record<keyof TempRanges, string>;
+
+function tempRangesToInputStrings(r: TempRanges): RangeInputs {
+  return {
+    minLow: String(r.minLow),
+    maxLow: String(r.maxLow),
+    minHigh: String(r.minHigh),
+    maxHigh: String(r.maxHigh),
+  };
+}
+
+/** Parse °C band field; NaN while empty or incomplete (user may still be typing). */
+function parseTempBandField(s: string): number {
+  const t = s.trim();
+  if (t === "" || t === "-" || t === "." || t === "-.") return NaN;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function rangeInputsToTempRanges(i: RangeInputs): TempRanges {
+  return {
+    minLow: parseTempBandField(i.minLow),
+    maxLow: parseTempBandField(i.maxLow),
+    minHigh: parseTempBandField(i.minHigh),
+    maxHigh: parseTempBandField(i.maxHigh),
+  };
+}
+
 type InitialAppState = {
   places: SelectedPlace[];
   activeIdx: number;
@@ -300,7 +331,21 @@ export default function App() {
   const [activeIdx, setActiveIdx] = useState(INITIAL_APP.activeIdx);
   const [year, setYear] = useState(INITIAL_APP.year);
 
-  const [ranges, setRanges] = useState<TempRanges>(() => ({ ...INITIAL_APP.ranges }));
+  const [rangeInputs, setRangeInputs] = useState<RangeInputs>(() =>
+    tempRangesToInputStrings(INITIAL_APP.ranges)
+  );
+  const lastPersistedRangesRef = useRef<TempRanges>({ ...INITIAL_APP.ranges });
+
+  const ranges = useMemo(() => rangeInputsToTempRanges(rangeInputs), [rangeInputs]);
+
+  const rangesForPersist = useMemo(() => {
+    const allFinite = [ranges.minLow, ranges.maxLow, ranges.minHigh, ranges.maxHigh].every(Number.isFinite);
+    if (allFinite) {
+      lastPersistedRangesRef.current = ranges;
+      return ranges;
+    }
+    return lastPersistedRangesRef.current;
+  }, [ranges]);
 
   const [tempSource, setTempSource] = useState<TempSource>(INITIAL_APP.tempSource);
 
@@ -338,7 +383,7 @@ export default function App() {
         places,
         activeIdx,
         year,
-        ranges,
+        ranges: rangesForPersist,
         tempSource,
         geoLang,
         summaryMode,
@@ -352,7 +397,7 @@ export default function App() {
     places,
     activeIdx,
     year,
-    ranges,
+    rangesForPersist,
     tempSource,
     geoLang,
     summaryMode,
@@ -743,17 +788,29 @@ export default function App() {
             <label>Daily low between</label>
             <div className="inline-pair">
               <input
-                type="number"
-                step="0.5"
-                value={ranges.minLow}
-                onChange={(e) => setRanges((r) => ({ ...r, minLow: Number(e.target.value) }))}
+                type="text"
+                inputMode="decimal"
+                className="band-input"
+                autoComplete="off"
+                value={rangeInputs.minLow}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== "" && !BAND_INPUT_PATTERN.test(v)) return;
+                  setRangeInputs((r) => ({ ...r, minLow: v }));
+                }}
               />
               <span className="muted">and</span>
               <input
-                type="number"
-                step="0.5"
-                value={ranges.maxLow}
-                onChange={(e) => setRanges((r) => ({ ...r, maxLow: Number(e.target.value) }))}
+                type="text"
+                inputMode="decimal"
+                className="band-input"
+                autoComplete="off"
+                value={rangeInputs.maxLow}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== "" && !BAND_INPUT_PATTERN.test(v)) return;
+                  setRangeInputs((r) => ({ ...r, maxLow: v }));
+                }}
               />
             </div>
           </div>
@@ -761,17 +818,29 @@ export default function App() {
             <label>Daily high between</label>
             <div className="inline-pair">
               <input
-                type="number"
-                step="0.5"
-                value={ranges.minHigh}
-                onChange={(e) => setRanges((r) => ({ ...r, minHigh: Number(e.target.value) }))}
+                type="text"
+                inputMode="decimal"
+                className="band-input"
+                autoComplete="off"
+                value={rangeInputs.minHigh}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== "" && !BAND_INPUT_PATTERN.test(v)) return;
+                  setRangeInputs((r) => ({ ...r, minHigh: v }));
+                }}
               />
               <span className="muted">and</span>
               <input
-                type="number"
-                step="0.5"
-                value={ranges.maxHigh}
-                onChange={(e) => setRanges((r) => ({ ...r, maxHigh: Number(e.target.value) }))}
+                type="text"
+                inputMode="decimal"
+                className="band-input"
+                autoComplete="off"
+                value={rangeInputs.maxHigh}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v !== "" && !BAND_INPUT_PATTERN.test(v)) return;
+                  setRangeInputs((r) => ({ ...r, maxHigh: v }));
+                }}
               />
             </div>
           </div>
